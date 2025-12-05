@@ -1,0 +1,16 @@
+name: bus-tracker
+
+services:
+  database:
+    container_name: gtfs_database
+    image: postgres:18
+    env_file: 
+      - database.env
+    volumes:
+      - database-data:/var/lib/postgresql/18/docker
+    ports:
+      - 5433:5432
+    restart: always
+
+volumes:
+  database-data:

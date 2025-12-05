@@ -1,0 +1,106 @@
+import fs from 'fs';
+import readline from 'readline';
+import path from 'path';
+import sql from './database.ts';
+
+interface LastTripData {
+    tripId: string;
+    startTime: string;
+    endTime: string;
+}
+
+export async function importGtfs(filePath: string, date: Date): Promise<void> {
+    const lastGtfsVersion = await sql`
+        SELECT version FROM gtfs_versions
+        ORDER BY version DESC
+        LIMIT 1
+    `;
+
+    const gtfsVersion = lastGtfsVersion[0] ? parseInt(lastGtfsVersion[0].version) + 1 : 1;
+    await sql`
+        INSERT INTO gtfs_versions (version, import_date)
+        VALUES (${gtfsVersion}, ${date})
+    `;
+
+    {
+        const tripsData = readline.createInterface({
+            input: fs.createReadStream(path.join(filePath, "trips.txt")),
+            crlfDelay: Infinity
+        });
+
+        const promises = [];
+
+        let first = true;
+        for await (const line of tripsData) {
+            if (first) {
+                first = false;
+                continue; // skip header
+            }
+
+            const columns = line.split(',');
+            const routeId = columns[0]!;
+            const serviceId = columns[1]!;
+            const tripId = columns[2]!;
+            const tripHeadsign = columns[3]!;
+            const routeDirection = columns[5]!;
+            const block_id = columns[6]!;
+            const shape_id = columns[7]!;
+    
+            promises.push(sql`
+                INSERT INTO blocks (gtfs_version, route_id, service_id, trip_id, trip_headsign, route_direction, block_id, shape_id)
+                VALUES (${gtfsVersion}, ${routeId}, ${serviceId}, ${tripId}, ${tripHeadsign}, ${routeDirection}, ${block_id}, ${shape_id})
+            `);
+        }
+
+        await Promise.all(promises);
+        tripsData.close();
+    }
+
+    {
+        const stopTimes = readline.createInterface({
+            input: fs.createReadStream(path.join(filePath, "stop_times.txt")),
+            crlfDelay: Infinity
+        });
+
+        const promises = [];
+    
+        let first = true;
+        let lastTripData: LastTripData | null = null
+        for await (const line of stopTimes) {
+            if (first) {
+                first = false;
+                continue; // skip header
+            }
+
+            const columns = line.split(',');
+            const tripId = columns[0]!;
+            const timestamp = columns[2]!;
+
+            if (lastTripData && lastTripData.tripId !== tripId) {
+                console.log(`Imported block for trip ${lastTripData.tripId}: ${lastTripData.startTime} - ${lastTripData.endTime}`);
+                // Write the last trip's data
+                promises.push(sql`
+                    UPDATE blocks
+                    SET start_time = ${lastTripData.startTime}, end_time = ${lastTripData.endTime}
+                    WHERE trip_id = ${lastTripData.tripId} AND gtfs_version = ${gtfsVersion}
+                `);
+
+                lastTripData = null;
+            }
+
+            if (!lastTripData) {
+                lastTripData = {
+                    tripId,
+                    startTime: timestamp,
+                    endTime: timestamp
+                };
+            } else {
+                lastTripData.endTime = timestamp;
+            }
+        }
+
+        await Promise.all(promises);
+
+        stopTimes.close();
+    }
+}
