@@ -16,6 +16,7 @@ const sql = postgres({
     user: config.db.user,
     password: config.db.password,
     onnotice: () => void 0,
+    max: 75
 });
 
 // Run schema

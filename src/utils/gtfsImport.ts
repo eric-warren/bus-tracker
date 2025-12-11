@@ -74,7 +74,23 @@ export async function importGtfs(filePath: string, date: Date): Promise<void> {
 
             const columns = line.split(',');
             const tripId = columns[0]!;
-            const timestamp = columns[2]!;
+            const arrivalTime = columns[1]!;
+            const departureTime = columns[2]!;
+            const stopId = columns[3]!;
+            const stopSequence = parseInt(columns[4]!);
+            const distanceTraveled = columns[7] ? parseFloat(columns[7]!) : null;
+            const timepoint = columns[8] ? parseInt(columns[8]!) : null;
+
+            // Don't run out of memory
+            if (promises.length >= 1000000) {
+                await Promise.all(promises);
+                promises.length = 0;
+            }
+
+            promises.push(sql`
+                INSERT INTO stops (gtfs_version, trip_id, arrival_time, departure_time, stop_id, stop_sequence, distance_traveled, timepoint)
+                VALUES (${gtfsVersion}, ${tripId}, ${arrivalTime}, ${departureTime}, ${stopId}, ${stopSequence}, ${distanceTraveled}, ${timepoint})
+            `);
 
             if (lastTripData && lastTripData.tripId !== tripId) {
                 console.log(`Imported block for trip ${lastTripData.tripId}: ${lastTripData.startTime} - ${lastTripData.endTime}`);
@@ -91,11 +107,11 @@ export async function importGtfs(filePath: string, date: Date): Promise<void> {
             if (!lastTripData) {
                 lastTripData = {
                     tripId,
-                    startTime: timestamp,
-                    endTime: timestamp
+                    startTime: departureTime,
+                    endTime: departureTime
                 };
             } else {
-                lastTripData.endTime = timestamp;
+                lastTripData.endTime = departureTime;
             }
         }
 

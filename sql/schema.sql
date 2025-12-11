@@ -21,12 +21,25 @@ CREATE TABLE IF NOT EXISTS vehicles (
     time TIMESTAMP,
     id TEXT,
     trip_id TEXT,
-    trip_start_time INTERVAL,
+    delay_min DOUBLE PRECISION,
     latitude DOUBLE PRECISION,
     longitude DOUBLE PRECISION,
     speed DOUBLE PRECISION,
-    recorded_timestamp TIMESTAMP,
+    recorded_timestamp INTERVAL,
+    next_stop_id TEXT,
     PRIMARY KEY (time, id)
+);
+
+CREATE TABLE IF NOT EXISTS stops (
+    gtfs_version NUMERIC,
+    trip_id TEXT,
+    stop_id TEXT,
+    arrival_time INTERVAL,
+    departure_time INTERVAL,
+    stop_sequence INT,
+    distance_traveled DOUBLE PRECISION,
+    timepoint INT,
+    PRIMARY KEY (gtfs_version, trip_id, stop_id, stop_sequence)
 );
 
 CREATE TABLE IF NOT EXISTS block_data (
@@ -37,5 +50,6 @@ CREATE TABLE IF NOT EXISTS block_data (
     route_id TEXT,
     route_direction INT,
     start_time INTERVAL,
+    scheduled_start_time INTERVAL,
     PRIMARY KEY (date, trip_id)
 );

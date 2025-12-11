@@ -46,3 +46,4 @@ docker/database.env
 .vscode
 
 data
+ignored
