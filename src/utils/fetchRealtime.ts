@@ -170,13 +170,9 @@ function timeToMinutes(time: string): number {
 
 async function getRealTripId(recievedTripId: string, routeId: string, startTime: string): Promise<string> {
     //todo: also use current day of week to determine service id
-    const currentTrip = await sql`
-        SELECT trip_id FROM blocks
-        WHERE trip_id = ${recievedTripId}
-    `;
-    if (currentTrip.length) return recievedTripId;
+    if (parseInt(recievedTripId) > 0) return recievedTripId;
 
-    // Try to find tripID
+    // Try to find tripID when it is negative
     const trip = await sql`
         SELECT trip_id FROM blocks
         WHERE route_id = ${routeId} AND start_time = ${startTime}
