@@ -6,4 +6,4 @@ COPY node_modules ./node_modules
 COPY config.json config.json
 
 EXPOSE 8080
-CMD ["npm start"]
+CMD ["npm", "start"]
