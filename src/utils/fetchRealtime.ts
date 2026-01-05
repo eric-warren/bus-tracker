@@ -171,7 +171,8 @@ function timeToMinutes(time: string): number {
 }
 
 async function getRealTripId(serviceIds: string[], recievedTripId: string, routeId: string, startTime: string): Promise<string> {
-    if (parseInt(recievedTripId) > 0) return recievedTripId;
+    const intTripId = parseInt(recievedTripId);
+    if (intTripId > 0 || intTripId > 1000000000) return recievedTripId;
 
     // Try to find tripID when it is negative
     const trip = await sql`
