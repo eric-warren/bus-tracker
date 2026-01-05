@@ -1,6 +1,7 @@
 import GtfsRealtimeBindings from "gtfs-realtime-bindings";
 import { config } from "./config.ts";
 import sql from "./database.ts";
+import { getServiceIds } from "./schedule.ts";
 
 const vehiclePositionsApi = "https://nextrip-public-api.azure-api.net/octranspo/gtfs-rt-vp/beta/v1/VehiclePositions";
 const tripUpdatesApi = "https://nextrip-public-api.azure-api.net/octranspo/gtfs-rt-tp/beta/v1/TripUpdates";
@@ -30,13 +31,14 @@ export async function fetchRealtime(): Promise<void> {
     const time = new Date();
     console.log(`Fetched GTFS-Realtime data at ${new Date(time).toISOString()}`);
 
+    const serviceIds = await getServiceIds(getCurrentDate());
     const promises = [];
 
     for (const entity of positionsFeed.entity) {
         if (entity.vehicle && entity.vehicle.vehicle && entity.vehicle.vehicle.id && entity.vehicle.position) {
             const busId = entity.vehicle.vehicle.id;
             const recievedTripId = entity.vehicle.trip?.tripId || null;
-            const tripId = recievedTripId ? await getRealTripId(recievedTripId, entity.vehicle.trip!.routeId!, entity.vehicle.trip!.startTime!) : null;
+            const tripId = recievedTripId ? await getRealTripId(serviceIds, recievedTripId, entity.vehicle.trip!.routeId!, entity.vehicle.trip!.startTime!) : null;
             const latitude = entity.vehicle.position.latitude;
             const longitude = entity.vehicle.position.longitude;
             const speed = entity.vehicle.position.speed || null;
@@ -144,7 +146,7 @@ function timestampToTimeString(now: Date, timestamp: string): string {
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 }
 
-function startDateToDate(startDate: string): Date {
+export function startDateToDate(startDate: string): Date {
     const year = parseInt(startDate.slice(0, 4));
     const month = parseInt(startDate.slice(4, 6)) - 1;
     const day = parseInt(startDate.slice(6, 8));
@@ -152,8 +154,8 @@ function startDateToDate(startDate: string): Date {
     return new Date(year, month, day);
 }
 
-function toDateString(date: Date): string {
-    return date.toISOString().split('T')[0]!;
+export function toDateString(date: Date): string {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 /**
@@ -168,14 +170,13 @@ function timeToMinutes(time: string): number {
     return hours * 60 + minutes + seconds / 60;
 }
 
-async function getRealTripId(recievedTripId: string, routeId: string, startTime: string): Promise<string> {
-    //todo: also use current day of week to determine service id
+async function getRealTripId(serviceIds: string[], recievedTripId: string, routeId: string, startTime: string): Promise<string> {
     if (parseInt(recievedTripId) > 0) return recievedTripId;
 
     // Try to find tripID when it is negative
     const trip = await sql`
         SELECT trip_id FROM blocks
-        WHERE route_id = ${routeId} AND start_time = ${startTime}
+        WHERE route_id = ${routeId} AND start_time = ${startTime} AND service_id IN (${serviceIds})
         ORDER BY gtfs_version DESC
     `;
 

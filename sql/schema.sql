@@ -53,3 +53,27 @@ CREATE TABLE IF NOT EXISTS block_data (
     scheduled_start_time INTERVAL,
     PRIMARY KEY (date, trip_id)
 );
+
+CREATE TABLE IF NOT EXISTS calendar (
+    gtfs_version NUMERIC,
+    service_id TEXT,
+    monday INT,
+    tuesday INT,
+    wednesday INT,
+    thursday INT,
+    friday INT,
+    saturday INT,
+    sunday INT,
+    start_date DATE,
+    end_date DATE
+);
+
+CREATE TABLE IF NOT EXISTS calendar_dates (
+    gtfs_version NUMERIC,
+    service_id TEXT,
+    date DATE,
+    exception_type INT,
+    PRIMARY KEY (gtfs_version, service_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS vehicles_trip_id ON vehicles (trip_id);

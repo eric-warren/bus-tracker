@@ -2,6 +2,7 @@ import fs from 'fs';
 import readline from 'readline';
 import path from 'path';
 import sql from './database.ts';
+import { startDateToDate } from './fetchRealtime.ts';
 
 interface LastTripData {
     tripId: string;
@@ -21,6 +22,73 @@ export async function importGtfs(filePath: string, date: Date): Promise<void> {
         INSERT INTO gtfs_versions (version, import_date)
         VALUES (${gtfsVersion}, ${date})
     `;
+
+    {
+        const calendarData = readline.createInterface({
+            input: fs.createReadStream(path.join(filePath, "calendar.txt")),
+            crlfDelay: Infinity
+        });
+
+        const promises = [];
+
+        let first = true;
+        for await (const line of calendarData) {
+            if (first) {
+                first = false;
+                continue; // skip header
+            }
+
+            const columns = line.split(',');
+            const serviceId = columns[0]!;
+            const monday = parseInt(columns[1]!);
+            const tuesday = parseInt(columns[2]!);
+            const wednesday = parseInt(columns[3]!);
+            const thursday = parseInt(columns[4]!);
+            const friday = parseInt(columns[5]!);
+            const saturday = parseInt(columns[6]!);
+            const sunday = parseInt(columns[7]!);
+            const startDate = startDateToDate(columns[8]!);
+            const endDate = startDateToDate(columns[9]!);
+    
+            promises.push(sql`
+                INSERT INTO calendar (gtfs_version, service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date)
+                VALUES (${gtfsVersion}, ${serviceId}, ${monday}, ${tuesday}, ${wednesday}, ${thursday}, ${friday}, ${saturday}, ${sunday}, ${startDate}, ${endDate})
+            `);
+        }
+
+        await Promise.all(promises);
+        calendarData.close();
+    }
+
+    {
+        const calendarDatesData = readline.createInterface({
+            input: fs.createReadStream(path.join(filePath, "calendar_dates.txt")),
+            crlfDelay: Infinity
+        });
+
+        const promises = [];
+
+        let first = true;
+        for await (const line of calendarDatesData) {
+            if (first) {
+                first = false;
+                continue; // skip header
+            }
+
+            const columns = line.split(',');
+            const serviceId = columns[0]!;
+            const date = startDateToDate(columns[1]!);
+            const exceptionType = columns[2]!;
+    
+            promises.push(sql`
+                INSERT INTO calendar_dates (gtfs_version, service_id, date, exception_type)
+                VALUES (${gtfsVersion}, ${serviceId}, ${date}, ${exceptionType})
+            `);
+        }
+
+        await Promise.all(promises);
+        calendarDatesData.close();
+    }
 
     {
         const tripsData = readline.createInterface({

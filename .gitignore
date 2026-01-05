@@ -47,3 +47,4 @@ docker/database.env
 
 data
 ignored
+database-data
