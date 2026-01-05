@@ -3,7 +3,7 @@ name: bus-tracker
 services:
   app:
     container_name: gtfs_app
-    image: ../
+    build: ../
     restart: always
   database:
     container_name: gtfs_database
