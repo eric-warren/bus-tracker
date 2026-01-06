@@ -9,13 +9,14 @@ interface BlockDetailsQuery {
 }
 
 interface BlockData {
-    tripId: string,
-    routeId: string,
-    headSign: string,
-    routeDirection: number,
-    scheduledStartTime: string,
-    actualStartTime: string | null,
-    busId: string | null
+    tripId: string;
+    routeId: string;
+    headSign: string;
+    routeDirection: number;
+    scheduledStartTime: string;
+    actualStartTime: string | null;
+    actualEndTime: string | null;
+    busId: string | null;
 }
 
 type AllBlocks = Record<string, BlockData[]>;
@@ -95,7 +96,10 @@ async function endpoint(request: FastifyRequest<{Querystring: BlockDetailsQuery}
 }
 
 async function getBlockData(blockId: string, gtfsVersion: number, serviceIds: string[], serviceDay: ServiceDay): Promise<BlockData[]> {
-    const blockData = await sql`SELECT route_id, b.trip_id, trip_headsign, route_direction, start_time, id as bus_id, time as actual_start_time
+    const blockData = await sql`SELECT route_id, b.trip_id, trip_headsign, route_direction, start_time,
+            id as bus_id, time as actual_start_time,
+            (SELECT v.time FROM vehicles v WHERE time > ${serviceDay.start}
+                AND time < ${serviceDay.end} AND v.trip_id = b.trip_id ORDER BY trip_id, time DESC LIMIT 1) as actual_end_time
         FROM blocks b LEFT JOIN LATERAL
             (SELECT v.id, v.time, v.trip_id FROM vehicles v WHERE time > ${serviceDay.start}
                 AND time < ${serviceDay.end} AND v.trip_id = b.trip_id ORDER BY trip_id, time ASC LIMIT 1) as s ON b.trip_id = s.trip_id
@@ -109,6 +113,7 @@ async function getBlockData(blockId: string, gtfsVersion: number, serviceIds: st
         routeDirection: v.route_direction as number,
         scheduledStartTime: v.start_time as string,
         actualStartTime: v.actual_start_time ? dateToTimeString(v.actual_start_time as Date) : null,
+        actualEndTime: v.actual_start_time ? dateToTimeString(v.actual_end_time as Date) : null,
         busId: v.bus_id as string
     })));
 }
