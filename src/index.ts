@@ -5,6 +5,7 @@ import { createBlockDetailsEndpoint } from "./endpoints/blockDetails.ts";
 import cors from "@fastify/cors";
 import { createListBlocksEndpoint } from "./endpoints/listBlocks.ts";
 import { createListVehiclesEndpoint } from "./endpoints/listVehicles.ts";
+import { config } from "./utils/config.ts";
 
 const interval = 60 * 1000;
 const server: FastifyInstance = Fastify()
@@ -24,7 +25,7 @@ try {
         origin: "*"
     });
 
-    await server.listen({ port: 3000 })
+    await server.listen({ port: config.port ?? 3000 })
 
 } catch (err) {
     server.log.error(err)
