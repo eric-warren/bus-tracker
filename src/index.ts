@@ -28,6 +28,6 @@ try {
     await server.listen({ port: config.port ?? 3000 })
 
 } catch (err) {
-    server.log.error(err)
-    process.exit(1)
+    console.error(err);
+    process.exit(1);
 }
