@@ -16,6 +16,7 @@ interface BlockData {
     scheduledStartTime: string;
     actualStartTime: string | null;
     actualEndTime: string | null;
+    canceled: number | null;
     busId: string | null;
 }
 
@@ -69,7 +70,7 @@ async function endpoint(request: FastifyRequest<{Querystring: BlockDetailsQuery}
     const busesToProcess: string[] = []
 
     // Find initial block
-    const initialBlock = await getBlockData(blockId, gtfsVersion, serviceIds, serviceDay);
+    const initialBlock = await getBlockData(blockId, gtfsVersion, serviceIds, serviceDay, dayOnlyDate);
     blocks[blockId] = initialBlock;
     busesToProcess.push(...initialBlock.map((v) => v.busId).filter((v) => !!v) as string[]);
 
@@ -82,7 +83,7 @@ async function endpoint(request: FastifyRequest<{Querystring: BlockDetailsQuery}
             const newBlockIds = await getBlocksForBus(nextBusId, gtfsVersion, serviceIds, serviceDay);
             for (const blockId of newBlockIds) {
                 if (!(blockId in blocks)) {
-                    const block = await getBlockData(blockId, gtfsVersion, serviceIds, serviceDay);
+                    const block = await getBlockData(blockId, gtfsVersion, serviceIds, serviceDay, dayOnlyDate);
                     blocks[blockId] = block;
 
                     // More buses to check, if they haven't been processed already
@@ -95,11 +96,12 @@ async function endpoint(request: FastifyRequest<{Querystring: BlockDetailsQuery}
     return blocks;
 }
 
-async function getBlockData(blockId: string, gtfsVersion: number, serviceIds: string[], serviceDay: ServiceDay): Promise<BlockData[]> {
+async function getBlockData(blockId: string, gtfsVersion: number, serviceIds: string[], serviceDay: ServiceDay, date: Date): Promise<BlockData[]> {
     const blockData = await sql`SELECT route_id, b.trip_id, trip_headsign, route_direction, start_time,
             id as bus_id, time as actual_start_time,
             (SELECT v.time FROM vehicles v WHERE time > ${serviceDay.start}
-                AND time < ${serviceDay.end} AND v.trip_id = b.trip_id AND s.id = v.id ORDER BY trip_id, time DESC LIMIT 1) as actual_end_time
+                AND time < ${serviceDay.end} AND v.trip_id = b.trip_id AND s.id = v.id ORDER BY trip_id, time DESC LIMIT 1) as actual_end_time,
+            (SELECT schedule_relationship FROM canceled c WHERE date = ${date} AND trip_id = b.trip_id)
         FROM blocks b LEFT JOIN LATERAL
             (SELECT v.id, v.time, v.trip_id FROM vehicles v WHERE time > ${serviceDay.start}
                 AND time < ${serviceDay.end} AND v.trip_id = b.trip_id ORDER BY trip_id, time ASC LIMIT 1) as s ON b.trip_id = s.trip_id
@@ -114,6 +116,7 @@ async function getBlockData(blockId: string, gtfsVersion: number, serviceIds: st
         scheduledStartTime: v.start_time as string,
         actualStartTime: v.actual_start_time ? dateToTimeString(v.actual_start_time as Date) : null,
         actualEndTime: v.actual_start_time ? dateToTimeString(v.actual_end_time as Date) : null,
+        canceled: v.schedule_relationship,
         busId: v.bus_id as string
     })));
 }
