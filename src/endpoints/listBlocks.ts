@@ -42,8 +42,11 @@ async function endpoint(request: FastifyRequest<{Querystring: ListBlocksQuery}>)
     const gtfsVersion = await getGtfsVersion(dayOnlyDate);
 
     const blocks = await sql`SELECT block_id,
-            count(DISTINCT bus_id) as bus_count FROM block_data
-        WHERE date = ${dayOnlyDate.toLocaleDateString()}
+            count(DISTINCT bus_id) as bus_count
+        FROM (SELECT b.bus_id, b.block_id
+                FROM block_data b
+                LEFT JOIN canceled c ON b.trip_id = c.trip_id AND b.date = c.date
+                WHERE b.date = ${dayOnlyDate.toLocaleDateString()} AND schedule_relationship IS NULL)
         GROUP BY block_id`;
 
     const allBlocks = await sql`SELECT DISTINCT block_id FROM blocks
