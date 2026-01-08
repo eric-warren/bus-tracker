@@ -79,7 +79,7 @@ export async function fetchRealtime(): Promise<void> {
 
                         await sql`
                             INSERT INTO block_data (date, trip_id, block_id, bus_id, route_id, route_direction, start_time, scheduled_start_time)
-                            VALUES (${date}, ${tripId}, ${blockData[0].block_id}, ${busId}, ${blockData[0].route_id}, ${blockData[0].route_direction}, ${recorded_timestamp}, ${scheduledStartTime})
+                            VALUES (${toDateString(date)}, ${tripId}, ${blockData[0].block_id}, ${busId}, ${blockData[0].route_id}, ${blockData[0].route_direction}, ${recorded_timestamp}, ${scheduledStartTime})
                         `;
                     }
                 }
@@ -88,7 +88,7 @@ export async function fetchRealtime(): Promise<void> {
             // Delete any cancellation
             promises.push(sql`
                 DELETE FROM canceled
-                WHERE date = ${date} AND trip_id = ${tripId}
+                WHERE date = ${toDateString(date)} AND trip_id = ${tripId}
             `);
         }
     }
@@ -107,7 +107,7 @@ export async function fetchRealtime(): Promise<void> {
 
             promises.push(sql`
                 INSERT INTO canceled (time, date, trip_id, schedule_relationship)
-                VALUES (${time}, ${date}, ${tripId}, ${scheduleRelationship})
+                VALUES (${time}, ${toDateString(date)}, ${tripId}, ${scheduleRelationship})
                 ON CONFLICT (date, trip_id)
                 DO UPDATE SET schedule_relationship = ${scheduleRelationship}
             `);
