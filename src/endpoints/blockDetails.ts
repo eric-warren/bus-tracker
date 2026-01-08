@@ -115,7 +115,7 @@ async function getBlockData(blockId: string, gtfsVersion: number, serviceIds: st
         LEFT JOIN LATERAL
             (SELECT v.id, v.trip_id FROM vehicles v WHERE time > ${serviceDay.start}
                 AND time < ${serviceDay.end} AND v.trip_id = b.trip_id
-                AND recorded_timestamp > start_time ORDER BY trip_id, time ASC LIMIT 1) as v1 ON b.trip_id = v1.trip_id
+                AND recorded_timestamp > start_time + interval '5 min' ORDER BY trip_id, time ASC LIMIT 1) as v1 ON b.trip_id = v1.trip_id
         LEFT JOIN LATERAL    
             (SELECT recorded_timestamp as actual_start_time, v.trip_id FROM vehicles v WHERE time > ${serviceDay.start}
                 AND time < ${serviceDay.end} AND v.trip_id = b.trip_id 
