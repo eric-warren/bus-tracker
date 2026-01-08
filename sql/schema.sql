@@ -98,3 +98,6 @@ ON blocks (gtfs_version, service_id, block_id);
 CREATE INDEX IF NOT EXISTS blocks_data_route ON blocks (route_id);
 
 CREATE INDEX IF NOT EXISTS stops_arrival_time ON stops (trip_id, arrival_time);
+
+CREATE INDEX IF NOT EXISTS block_data_date_block_bus
+ON block_data (date, block_id, bus_id);
