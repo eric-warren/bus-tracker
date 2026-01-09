@@ -31,12 +31,12 @@ if (!fs.existsSync(schedulePath)) {
     fetchGtfs().catch(e => console.error("Error fetching GTFS data:", e));
 }
 
-/*
+
 // Schedule real-time data fetch every minute
 schedule.scheduleJob('* * * * *', () => 
     fetchRealtime().catch(e => console.error("Error fetching real-time data:", e))
 );
-fetchRealtime();*/
+fetchRealtime();
 
 createBusCountEndpoint(server);
 createBlockDetailsEndpoint(server);
