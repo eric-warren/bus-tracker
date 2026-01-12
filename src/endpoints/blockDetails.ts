@@ -60,7 +60,7 @@ async function endpoint(request: FastifyRequest<{Querystring: BlockDetailsQuery}
     const serviceDay = getServiceDayBoundariesWithPadding(dayOnlyDate);
 
     if (!blockId) {
-        blockId = await getBlockIdForBus(busId!, serviceDay);
+        blockId = await getBlockIdForBus(busId!, gtfsVersion, serviceIds, serviceDay);
         if (!blockId) {
             reply.status(400).send("No blocks running this bus today");
             return;
@@ -157,14 +157,21 @@ async function getBlockData(blockId: string, gtfsVersion: number, serviceIds: st
     }));
 }
 
-async function getBlockIdForBus(busId: string, serviceDay: ServiceDay): Promise<string | null> {
+async function getBlockIdForBus(busId: string, gtfsVersion: number, serviceIds: string[], serviceDay: ServiceDay): Promise<string | null> {
     const trip = await sql`SELECT trip_id FROM vehicles v WHERE time > ${serviceDay.start}
-                AND time < ${serviceDay.end} AND v.id = ${busId} ORDER BY trip_id, time ASC LIMIT 1`;
+                AND time < ${serviceDay.end} AND v.id = ${busId}
+                AND recorded_timestamp >
+                    (SELECT start_time FROM blocks b
+                        WHERE b.trip_id = v.trip_id 
+                        AND gtfs_version = ${gtfsVersion} 
+                        AND service_id IN ${sql(serviceIds)} LIMIT 1)
+                    + interval '5 min'
+                ORDER BY trip_id, time ASC LIMIT 1`;
     
     if (!trip[0]) return null;
                 
     const block = await sql`SELECT block_id
-        FROM blocks WHERE trip_id = ${trip[0].trip_id}`;
+        FROM blocks WHERE trip_id = ${trip[0].trip_id} AND gtfs_version = ${gtfsVersion} AND service_id IN ${sql(serviceIds)}`;
 
     return block[0]?.block_id ?? null;
 }
