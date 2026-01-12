@@ -108,7 +108,8 @@ async function getBlockData(blockId: string, gtfsVersion: number, serviceIds: st
             (SELECT s1.arrival_time as second_last_stop_time FROM 
                     -- Last two stops
                     (SELECT s.arrival_time, stop_sequence FROM stops s
-                        WHERE s.trip_id = b.trip_id ORDER BY arrival_time desc LIMIT 2) as s1
+                        WHERE s.trip_id = b.trip_id AND gtfs_version = ${gtfsVersion}
+                        ORDER BY arrival_time desc LIMIT 2) as s1
                 -- Only second last stop
                 ORDER BY s1.stop_sequence ASC LIMIT 1)
         FROM blocks b 
