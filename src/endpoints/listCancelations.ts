@@ -49,10 +49,10 @@ async function endpoint(request: FastifyRequest<{Querystring: ListCanceledQuery}
                     (SELECT trip_id FROM blocks b2
                         WHERE gtfs_version = ${gtfsVersion} AND service_id IN ${sql(serviceIds)}
                             AND b2.start_time > b.start_time AND b2.route_id = b.route_id AND b2.route_direction = b.route_direction
-                            AND (SELECT 1 FROM vehicles v2
+                            AND (SELECT count(*) FROM vehicles v2
                                 WHERE v2.trip_id = b2.trip_id
                                 AND time > ${serviceDay.start} AND time < ${serviceDay.end}
-                                LIMIT 1) = 1
+                                LIMIT 6) >= 6
                             ORDER BY start_time ASC limit 1)
                 ORDER BY trip_id, time ASC LIMIT 1) as next_start_time,
         (SELECT recorded_timestamp FROM vehicles v WHERE time > ${serviceDay.start}
@@ -60,10 +60,10 @@ async function endpoint(request: FastifyRequest<{Querystring: ListCanceledQuery}
                     (SELECT trip_id FROM blocks b2
                         WHERE gtfs_version = ${gtfsVersion} AND service_id IN ${sql(serviceIds)}
                             AND b2.start_time < b.start_time AND b2.route_id = b.route_id AND b2.route_direction = b.route_direction
-                            AND (SELECT 1 FROM vehicles v2
+                            AND (SELECT count(*) FROM vehicles v2
                                 WHERE v2.trip_id = b2.trip_id
                                 AND time > ${serviceDay.start} AND time < ${serviceDay.end}
-                                LIMIT 1) = 1
+                                LIMIT 6) >= 6
                             ORDER BY start_time DESC limit 1)
                 ORDER BY trip_id, time ASC LIMIT 1) as last_start_time,
         (SELECT count(*) FROM blocks b2
