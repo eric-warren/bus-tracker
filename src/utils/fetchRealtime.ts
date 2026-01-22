@@ -57,32 +57,34 @@ export async function fetchRealtime(): Promise<void> {
                 `;
 
                 // Check if it is starting a new trip
-                const routeIdInt = parseInt(entity.vehicle!.trip!.routeId ?? "900");
-                if (tripId && (routeIdInt < 800 || isNaN(routeIdInt))) {
-                    const scheduledStartTime = entity.vehicle!.trip!.startTime!;
-                    const existingTrip = await sql`
-                        SELECT * from block_data
-                        WHERE date = ${toDateString(date)} AND trip_id = ${tripId}
-                    `;
-
-                    if (!existingTrip.length) {
-                        console.log(`Starting new trip for vehicle ${busId} with trip ID ${tripId}`);
-                        const blockData = await sql`
-                            SELECT block_id, route_id, route_direction FROM blocks
-                            WHERE trip_id = ${tripId}
-                            ORDER BY gtfs_version DESC
-                            LIMIT 1
+                if (tripId) {
+                    const routeIdInt = parseInt(entity.vehicle!.trip!.routeId ?? "900");
+                    if (routeIdInt < 800 || isNaN(routeIdInt)) {
+                        const scheduledStartTime = entity.vehicle!.trip!.startTime!;
+                        const existingTrip = await sql`
+                            SELECT * from block_data
+                            WHERE date = ${toDateString(date)} AND trip_id = ${tripId}
                         `;
-
-                        if (!blockData[0]) {
-                            console.warn(`No block data found for trip ID ${tripId}`);
-                            return;
+    
+                        if (!existingTrip.length) {
+                            console.log(`Starting new trip for vehicle ${busId} with trip ID ${tripId}`);
+                            const blockData = await sql`
+                                SELECT block_id, route_id, route_direction FROM blocks
+                                WHERE trip_id = ${tripId}
+                                ORDER BY gtfs_version DESC
+                                LIMIT 1
+                            `;
+    
+                            if (!blockData[0]) {
+                                console.warn(`No block data found for trip ID ${tripId}`);
+                                return;
+                            }
+    
+                            await sql`
+                                INSERT INTO block_data (date, trip_id, block_id, bus_id, route_id, route_direction, start_time, scheduled_start_time)
+                                VALUES (${toDateString(date)}, ${tripId}, ${blockData[0].block_id}, ${busId}, ${blockData[0].route_id}, ${blockData[0].route_direction}, ${recorded_timestamp}, ${scheduledStartTime})
+                            `;
                         }
-
-                        await sql`
-                            INSERT INTO block_data (date, trip_id, block_id, bus_id, route_id, route_direction, start_time, scheduled_start_time)
-                            VALUES (${toDateString(date)}, ${tripId}, ${blockData[0].block_id}, ${busId}, ${blockData[0].route_id}, ${blockData[0].route_direction}, ${recorded_timestamp}, ${scheduledStartTime})
-                        `;
                     }
                 }
             })());
