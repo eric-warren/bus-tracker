@@ -13,6 +13,8 @@ import schedule from 'node-schedule';
 import fs from 'fs';
 import { createListCanceledEndpoint } from "./endpoints/listCancelations.ts";
 import { createOnTimePerformanceEndpoint } from "./endpoints/onTimePerformance.ts";
+import { createCacheEndpoints } from "./endpoints/cache.ts";
+import { ensureCacheTableExists } from "./utils/cacheManager.ts";
 
 const schedulePath = 'schedule/schedule.zip';
 
@@ -24,6 +26,11 @@ const server: FastifyInstance = Fastify({
         }
     }
 });
+
+await server.register(cors, { origin: "*" });
+
+// Initialize cache table
+await ensureCacheTableExists();
 
 // Schedule GTFS data fetch at 1 AM daily
 schedule.scheduleJob(
@@ -53,12 +60,9 @@ createRouteDetailsEndpoint(server);
 createListRoutesEndpoint(server);
 createListCanceledEndpoint(server);
 createOnTimePerformanceEndpoint(server);
+createCacheEndpoints(server);
 
 try {
-    await server.register(cors, {
-        origin: "*"
-    });
-
     await server.listen({ port: config.port ?? 3000, host: config.host ?? "0.0.0.0" })
 
 } catch (err) {

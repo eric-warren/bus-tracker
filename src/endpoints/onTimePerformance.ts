@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest, RouteShorthandOptions } from "fastify";
 import { dateToTimeString, getDateFromTimestamp, getGtfsVersion, getServiceDayBoundariesWithPadding, getServiceIds, timeStringDiff } from "../utils/schedule.ts";
 import sql from "../utils/database.ts";
+import { isCurrentServiceDay, getCachedStats, setCachedStats } from "../utils/cacheManager.ts";
 
 // OC Transpo frequent transit network routes (15 min or better during peak)
 const frequentRouteIds = new Set([
@@ -169,6 +170,19 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
         return;
     }
 
+    // Check cache for single-day queries (not current service day)
+    const isSingleDay = !endDate || (endDate && startDate.getTime() === endDate.getTime());
+    const isCurrentDay = isSingleDay && isCurrentServiceDay(startDate);
+    
+    if (isSingleDay && !isCurrentDay && !routeFilter && !frequencyFilter) {
+        // Try to get from cache
+        const cached = await getCachedStats(startDate, metric, threshold, includeCanceled, null, null);
+        if (cached) {
+            reply.send(cached);
+            return;
+        }
+    }
+
     const days: Date[] = [];
     const rangeEnd = endDate ?? startDate;
     for (let d = new Date(startDate); d <= rangeEnd; d.setDate(d.getDate() + 1)) {
@@ -288,7 +302,7 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
     const bucketList = Object.entries(buckets).map(([label, agg]) => ({ label, ...withStats(agg) }));
     const routeBucketList = Object.entries(routeBuckets).map(([label, agg]) => ({ label, ...withStats(agg) }));
 
-    return {
+    const response = {
         date: startDate.toISOString().slice(0, 10),
         endDate: rangeEnd.toISOString().slice(0, 10),
         metric,
@@ -303,6 +317,13 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
         timeOfDay: bucketList,
         routeTimeOfDay: routeFilter ? routeBucketList : null
     };
+
+    // Store in cache if single day and not current day and no filters
+    if (isSingleDay && !isCurrentDay && !routeFilter && !frequencyFilter) {
+        await setCachedStats(startDate, metric, threshold, includeCanceled, null, null, response);
+    }
+
+    reply.send(response);
 }
 
 function withPercent(agg: Aggregate) {
