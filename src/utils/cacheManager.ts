@@ -1,106 +1,79 @@
 import sql from './database.ts';
-import { toDateString } from './schedule.ts';
+import { getDateFromTimestamp, toDateString } from './schedule.ts';
 
-export interface OnTimePerformanceResponse {
-    date: string;
-    endDate: string;
-    metric: string;
-    thresholdMinutes: number;
-    includeCanceled: boolean;
-    frequencyFilter?: string | null;
-    overall: any;
-    routeSummary: any;
-    routes: any[];
-    routesCombined: any[];
-    timeOfDay: any[];
-    routeTimeOfDay: any[] | null;
+export interface Counts {
+    totalScheduled: number;
+    evaluatedTrips: number;
+    onTimeTrips: number;
+    canceledTrips: number;
 }
 
-// Initialize cache table on module load
+export interface AggregateWithDelays {
+    counts: Counts;
+    delays: number[];
+}
+
+export interface CachedAggregates {
+    overall: AggregateWithDelays;
+    routes: Record<string, AggregateWithDelays>;
+    buckets: Record<string, AggregateWithDelays>;
+    routeOverall: AggregateWithDelays;
+    routeBuckets: Record<string, AggregateWithDelays>;
+}
+
 let cacheTableInitialized = false;
 
 export async function ensureCacheTableExists(): Promise<void> {
     if (cacheTableInitialized) return;
-    
+
     try {
-        // Drop existing table if it exists (to ensure correct schema)
         await sql`DROP TABLE IF EXISTS cache_on_time_performance CASCADE`;
-        
-        // Create table with composite primary key using empty strings for NULL values
+
         await sql`
-            CREATE TABLE cache_on_time_performance (
-                date DATE NOT NULL,
+            CREATE TABLE IF NOT EXISTS cache_on_time_daily (
+                service_date DATE NOT NULL,
                 metric VARCHAR(20) NOT NULL,
                 threshold_minutes INT NOT NULL,
                 include_canceled BOOLEAN NOT NULL,
-                frequency_filter VARCHAR(20) NOT NULL DEFAULT '',
-                route_id VARCHAR(10) NOT NULL DEFAULT '',
+                frequency_filter VARCHAR(20) NOT NULL,
+                route_id VARCHAR(20) NOT NULL,
                 data JSONB NOT NULL,
                 cached_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                PRIMARY KEY (date, metric, threshold_minutes, include_canceled, frequency_filter, route_id)
+                PRIMARY KEY (service_date, metric, threshold_minutes, include_canceled, frequency_filter, route_id)
             )
         `;
-        
-        // Create index separately
-        await sql`CREATE INDEX idx_cache_date ON cache_on_time_performance(date)`;
+        await sql`CREATE INDEX IF NOT EXISTS idx_cache_on_time_daily_date ON cache_on_time_daily(service_date)`;
+
         cacheTableInitialized = true;
     } catch (error) {
-        console.error('Error creating cache table:', error);
+        console.error('Error ensuring cache tables exist:', error);
+        throw error;
     }
 }
 
-/**
- * Check if the given date is the current service day
- * Service day runs from 3 AM to 3 AM the next day
- */
 export function isCurrentServiceDay(date: Date): boolean {
-    const today = new Date();
-    const todayServiceDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    
-    // If before 3 AM, today's data belongs to yesterday's service
-    if (today.getHours() < 3) {
-        todayServiceDate.setDate(todayServiceDate.getDate() - 1);
-    }
-    
-    return date.getTime() === todayServiceDate.getTime();
+    const todayServiceDay = getDateFromTimestamp(new Date());
+    return toDateString(date) === toDateString(todayServiceDay);
 }
 
-/**
- * Generate a cache key from query parameters
- */
-export function generateCacheKey(
-    date: Date,
+export async function getCachedDailyStats(
+    serviceDate: Date,
     metric: string,
     thresholdMinutes: number,
     includeCanceled: boolean,
     frequencyFilter: string | null,
     routeId: string | null
-): string {
-    return `${toDateString(date)}|${metric}|${thresholdMinutes}|${includeCanceled}|${frequencyFilter || 'null'}|${routeId || 'null'}`;
-}
-
-/**
- * Get cached statistics from database
- * Returns null if not found
- */
-export async function getCachedStats(
-    date: Date,
-    metric: string,
-    thresholdMinutes: number,
-    includeCanceled: boolean,
-    frequencyFilter: string | null,
-    routeId: string | null
-): Promise<OnTimePerformanceResponse | null> {
+): Promise<CachedAggregates | null> {
     await ensureCacheTableExists();
-    const dateStr = toDateString(date);
-    // Use empty string for NULL values in composite key
+
+    const dateStr = toDateString(serviceDate);
     const filterStr = frequencyFilter || '';
     const idStr = routeId || '';
-    
+
     try {
-        const result = await sql<{ data: OnTimePerformanceResponse }[]>`
-            SELECT data FROM cache_on_time_performance
-            WHERE date = ${dateStr}::date
+        const result = await sql<{ data: CachedAggregates }[]>`
+            SELECT data FROM cache_on_time_daily
+            WHERE service_date = ${dateStr}::date
               AND metric = ${metric}
               AND threshold_minutes = ${thresholdMinutes}
               AND include_canceled = ${includeCanceled}
@@ -108,47 +81,40 @@ export async function getCachedStats(
               AND route_id = ${idStr}
             LIMIT 1
         `;
-        
-        if (result.length > 0) {
-            return result[0].data;
-        }
+
+        if (result.length > 0) return result[0].data;
         return null;
     } catch (error) {
-        console.error('Error fetching from cache:', error);
+        console.error('Error fetching daily cache:', error);
         return null;
     }
 }
 
-/**
- * Store statistics in cache
- */
-export async function setCachedStats(
-    date: Date,
+export async function setCachedDailyStats(
+    serviceDate: Date,
     metric: string,
     thresholdMinutes: number,
     includeCanceled: boolean,
     frequencyFilter: string | null,
     routeId: string | null,
-    data: OnTimePerformanceResponse
+    data: CachedAggregates
 ): Promise<void> {
     await ensureCacheTableExists();
-    const dateStr = toDateString(date);
-    // Use empty string for NULL values in composite key
+    const dateStr = toDateString(serviceDate);
     const filterStr = frequencyFilter || '';
     const idStr = routeId || '';
-    
+
     try {
         await sql`
-            INSERT INTO cache_on_time_performance 
-            (date, metric, threshold_minutes, include_canceled, frequency_filter, route_id, data, cached_at)
-            VALUES 
+            INSERT INTO cache_on_time_daily
+            (service_date, metric, threshold_minutes, include_canceled, frequency_filter, route_id, data, cached_at)
+            VALUES
             (${dateStr}::date, ${metric}, ${thresholdMinutes}, ${includeCanceled}, ${filterStr}, ${idStr}, ${sql.json(data)}, NOW())
-            ON CONFLICT (date, metric, threshold_minutes, include_canceled, frequency_filter, route_id)
+            ON CONFLICT (service_date, metric, threshold_minutes, include_canceled, frequency_filter, route_id)
             DO UPDATE SET data = EXCLUDED.data, cached_at = NOW()
         `;
     } catch (error) {
-        console.error('Error writing to cache:', error);
-        // Don't throw - caching failure should not break the API
+        console.error('Error writing daily cache:', error);
     }
 }
 
@@ -156,13 +122,15 @@ export async function setCachedStats(
  * Clear cache for a specific date range
  */
 export async function invalidateCacheForDateRange(startDate: Date, endDate: Date): Promise<void> {
+    await ensureCacheTableExists();
     const startDateStr = toDateString(startDate);
     const endDateStr = toDateString(endDate);
-    
+
     try {
         await sql`
-            DELETE FROM cache_on_time_performance
-            WHERE date >= ${startDateStr}::date AND date <= ${endDateStr}::date
+            DELETE FROM cache_on_time_daily
+            WHERE service_date >= ${startDateStr}::date
+              AND service_date <= ${endDateStr}::date
         `;
     } catch (error) {
         console.error('Error invalidating cache:', error);
@@ -184,11 +152,11 @@ export async function getCacheStats(): Promise<{
         const stats = await sql<any[]>`
             SELECT 
                 COUNT(*) as total_entries,
-                COUNT(DISTINCT date) as dates_with_cache,
-                MIN(date) as oldest_cached_date,
-                MAX(date) as newest_cached_date,
-                pg_size_pretty(pg_total_relation_size('cache_on_time_performance')) as cache_size
-            FROM cache_on_time_performance
+                COUNT(DISTINCT service_date) as dates_with_cache,
+                MIN(service_date) as oldest_cached_date,
+                MAX(service_date) as newest_cached_date,
+                pg_size_pretty(pg_total_relation_size('cache_on_time_daily')) as cache_size
+            FROM cache_on_time_daily
         `;
         
         if (stats.length > 0) {

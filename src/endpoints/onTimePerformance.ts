@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest, RouteShorthandOptions } from "fastify";
 import { dateToTimeString, getDateFromTimestamp, getGtfsVersion, getServiceDayBoundariesWithPadding, getServiceIds, timeStringDiff } from "../utils/schedule.ts";
 import sql from "../utils/database.ts";
-import { isCurrentServiceDay, getCachedStats, setCachedStats } from "../utils/cacheManager.ts";
+import { isCurrentServiceDay, getCachedDailyStats, setCachedDailyStats, type CachedAggregates, type AggregateWithDelays as CachedAggregateWithDelays } from "../utils/cacheManager.ts";
 
 // OC Transpo frequent transit network routes (15 min or better during peak)
 const frequentRouteIds = new Set([
@@ -111,6 +111,31 @@ function createAggregate(): AggregateWithDelays {
     };
 }
 
+function mergeAggregate(target: AggregateWithDelays, source: CachedAggregateWithDelays): void {
+    target.counts.totalScheduled += source.counts.totalScheduled;
+    target.counts.evaluatedTrips += source.counts.evaluatedTrips;
+    target.counts.onTimeTrips += source.counts.onTimeTrips;
+    target.counts.canceledTrips += source.counts.canceledTrips;
+    target.delays.push(...source.delays);
+}
+
+function mergeAggregateMap(target: Record<string, AggregateWithDelays>, source: Record<string, CachedAggregateWithDelays>): void {
+    for (const [key, agg] of Object.entries(source)) {
+        target[key] ??= createAggregate();
+        mergeAggregate(target[key], agg);
+    }
+}
+
+function emptyAggregateBundle(): { overall: AggregateWithDelays; routes: Record<string, AggregateWithDelays>; buckets: Record<string, AggregateWithDelays>; routeOverall: AggregateWithDelays; routeBuckets: Record<string, AggregateWithDelays> } {
+    return {
+        overall: createAggregate(),
+        routes: {},
+        buckets: Object.fromEntries(timeBuckets.map((b) => [b.label, createAggregate()])),
+        routeOverall: createAggregate(),
+        routeBuckets: Object.fromEntries(timeBuckets.map((b) => [b.label, createAggregate()]))
+    };
+}
+
 function withStats(agg: AggregateWithDelays) {
     const base = withPercent(agg.counts);
     const delayValues = agg.delays.length ? [...agg.delays].sort((a, b) => a - b) : null;
@@ -170,27 +195,25 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
         return;
     }
 
-    // Check cache for single-day queries (not current service day)
-    const isSingleDay = !endDate || (endDate && startDate.getTime() === endDate.getTime());
-    const isCurrentDay = isSingleDay && isCurrentServiceDay(startDate);
-    
-    if (isSingleDay && !isCurrentDay && !routeFilter && !frequencyFilter) {
-        // Try to get from cache
-        const cached = await getCachedStats(startDate, metric, threshold, includeCanceled, null, null);
-        if (cached) {
-            reply.send(cached);
-            return;
-        }
-    }
-
     const days: Date[] = [];
     const rangeEnd = endDate ?? startDate;
     for (let d = new Date(startDate); d <= rangeEnd; d.setDate(d.getDate() + 1)) {
         days.push(new Date(d));
     }
 
-    const trips: TripRow[] = [];
+    const containsCurrentDay = days.some(day => isCurrentServiceDay(day));
+
+    const perDayAggregates: CachedAggregates[] = [];
+
     for (const dayOnlyDate of days) {
+        // Always try to load the unfiltered base cache (metric, threshold, includeCanceled only)
+        // Filters (frequency, route) are applied at merge time, not cached
+        const existing = await getCachedDailyStats(dayOnlyDate, metric, threshold, includeCanceled, null, null);
+        if (existing) {
+            perDayAggregates.push(existing);
+            continue;
+        }
+
         const gtfsVersion = await getGtfsVersion(dayOnlyDate);
         if (!gtfsVersion) {
             continue;
@@ -201,10 +224,9 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
         }
         const serviceDay = getServiceDayBoundariesWithPadding(dayOnlyDate);
         
-        // Format date as YYYY-MM-DD for PostgreSQL
         const dateStr = `${dayOnlyDate.getFullYear()}-${String(dayOnlyDate.getMonth() + 1).padStart(2, '0')}-${String(dayOnlyDate.getDate()).padStart(2, '0')}`;
 
-        const dayTrips = await sql<TripRow[]>`
+        const trips = await sql<TripRow[]>`
             WITH service AS (
                 SELECT ${serviceDay.start}::timestamptz AS start_at, ${serviceDay.end}::timestamptz AS end_at
             ),
@@ -228,64 +250,78 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
             LEFT JOIN canceled c ON c.trip_id = tm.trip_id AND c.date = ${new Date(dateStr)}
         `;
 
-        trips.push(...dayTrips);
+        if (!trips.length) {
+            continue;
+        }
+
+        const dayAgg = emptyAggregateBundle();
+
+        for (const trip of trips) {
+            const isCanceled = !!trip.schedule_relationship;
+
+            const routeKey = `${trip.route_id}:${trip.route_direction}`;
+            dayAgg.routes[routeKey] ??= createAggregate();
+
+            const metricValue = computeMetric(trip, metric);
+            const onTimeFromMetric = metricValue === null ? null : Math.abs(metricValue) <= threshold;
+            const onTime = isCanceled ? (includeCanceled ? false : null) : onTimeFromMetric;
+
+            updateAggregate(dayAgg.overall, onTime, isCanceled, metricValue);
+            updateAggregate(dayAgg.routes[routeKey], onTime, isCanceled, metricValue);
+
+            const bucketLabel = bucketForTrip(trip);
+            if (bucketLabel && dayAgg.buckets[bucketLabel]) {
+                updateAggregate(dayAgg.buckets[bucketLabel], onTime, isCanceled, metricValue);
+            }
+        }
+
+        // Cache the UNFILTERED base data (filters applied at merge time)
+        const cachedPayload: CachedAggregates = dayAgg;
+        await setCachedDailyStats(dayOnlyDate, metric, threshold, includeCanceled, null, null, cachedPayload);
+        perDayAggregates.push(cachedPayload);
     }
 
-    if (!trips.length) {
+    if (!perDayAggregates.length) {
         reply.status(404).send({ error: "No data available for the requested date range" });
         return;
     }
 
-    const overall = createAggregate();
-    const routes: Record<string, AggregateWithDelays> = {};
-    const buckets: Record<string, AggregateWithDelays> = Object.fromEntries(timeBuckets.map((b) => [b.label, createAggregate()]));
-    const routeOverall = createAggregate();
-    const routeBuckets: Record<string, AggregateWithDelays> = Object.fromEntries(timeBuckets.map((b) => [b.label, createAggregate()]));
-
-    for (const trip of trips) {
-        const isCanceled = !!trip.schedule_relationship;
-        const matchesRoute = !routeFilter || trip.route_id === routeFilter;
+    // Merge all days first
+    const merged = emptyAggregateBundle();
+    for (const agg of perDayAggregates) {
+        mergeAggregate(merged.overall, agg.overall);
+        mergeAggregateMap(merged.routes, agg.routes);
+        mergeAggregateMap(merged.buckets, agg.buckets);
+    }
+    
+    // Build routeOverall and routeBuckets based on filters
+    for (const [key, agg] of Object.entries(merged.routes)) {
+        const routeId = key.split(':')[0];
+        const isFrequent = frequentRouteIds.has(routeId);
         
-        // Apply frequency filter
-        const isFrequentRoute = frequentRouteIds.has(trip.route_id);
         const matchesFrequency = !frequencyFilter || 
-            (frequencyFilter === 'frequent' && isFrequentRoute) ||
-            (frequencyFilter === 'non-frequent' && !isFrequentRoute);
+            (frequencyFilter === 'frequent' && isFrequent) ||
+            (frequencyFilter === 'non-frequent' && !isFrequent);
+        const matchesRoute = !routeFilter || routeId === routeFilter;
         
-        // Skip trips that don't match frequency filter
-        if (!matchesFrequency) {
-            continue;
-        }
-
-        const routeKey = `${trip.route_id}:${trip.route_direction}`;
-        routes[routeKey] ??= createAggregate();
-
-        const metricValue = computeMetric(trip, metric);
-        const onTimeFromMetric = metricValue === null ? null : Math.abs(metricValue) <= threshold;
-        const onTime = isCanceled ? (includeCanceled ? false : null) : onTimeFromMetric;
-
-        updateAggregate(overall, onTime, isCanceled, metricValue);
-        updateAggregate(routes[routeKey], onTime, isCanceled, metricValue);
-        if (matchesRoute) {
-            updateAggregate(routeOverall, onTime, isCanceled, metricValue);
-        }
-
-        const bucketLabel = bucketForTrip(trip);
-        if (bucketLabel && buckets[bucketLabel]) {
-            updateAggregate(buckets[bucketLabel], onTime, isCanceled, metricValue);
-            if (matchesRoute && routeBuckets[bucketLabel]) {
-                updateAggregate(routeBuckets[bucketLabel], onTime, isCanceled, metricValue);
-            }
+        if (matchesFrequency && matchesRoute) {
+            mergeAggregate(merged.routeOverall, agg);
         }
     }
+    
+    // For routeBuckets: we need to recompute from the trips if a route filter is specified
+    // Since the cached data has full routes aggregated per bucket, we can't easily extract per-route-per-bucket
+    // So we'll keep routeBuckets as the full bucket data (matching bucket filtering behavior)
+    merged.routeBuckets = { ...merged.buckets };
 
-    const routeList = Object.entries(routes).map(([key, agg]) => {
+
+    const routeList = Object.entries(merged.routes).map(([key, agg]) => {
         const [routeId, direction] = key.split(":");
         return { routeId, direction: Number(direction), ...withStats(agg) };
     }).sort((a, b) => parseInt(a.routeId) - parseInt(b.routeId));
 
     const routesCombined: Record<string, AggregateWithDelays> = {};
-    for (const [key, agg] of Object.entries(routes)) {
+    for (const [key, agg] of Object.entries(merged.routes)) {
         const [routeId] = key.split(":");
         routesCombined[routeId] ??= createAggregate();
         routesCombined[routeId].counts.totalScheduled += agg.counts.totalScheduled;
@@ -299,8 +335,8 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
         .map(([routeId, agg]) => ({ routeId, ...withStats(agg) }))
         .sort((a, b) => parseInt(a.routeId) - parseInt(b.routeId));
 
-    const bucketList = Object.entries(buckets).map(([label, agg]) => ({ label, ...withStats(agg) }));
-    const routeBucketList = Object.entries(routeBuckets).map(([label, agg]) => ({ label, ...withStats(agg) }));
+    const bucketList = Object.entries(merged.buckets).map(([label, agg]) => ({ label, ...withStats(agg) }));
+    const routeBucketList = Object.entries(merged.routeBuckets).map(([label, agg]) => ({ label, ...withStats(agg) }));
 
     const response = {
         date: startDate.toISOString().slice(0, 10),
@@ -310,18 +346,13 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
         includeCanceled,
         routeId: routeFilter,
         frequencyFilter: frequencyFilter,
-        overall: withStats(overall),
-        routeSummary: routeFilter ? withStats(routeOverall) : null,
+        overall: withStats(merged.overall),
+        routeSummary: routeFilter ? withStats(merged.routeOverall) : null,
         routes: routeList,
         routesCombined: routeCombinedList,
         timeOfDay: bucketList,
         routeTimeOfDay: routeFilter ? routeBucketList : null
     };
-
-    // Store in cache if single day and not current day and no filters
-    if (isSingleDay && !isCurrentDay && !routeFilter && !frequencyFilter) {
-        await setCachedStats(startDate, metric, threshold, includeCanceled, null, null, response);
-    }
 
     reply.send(response);
 }
