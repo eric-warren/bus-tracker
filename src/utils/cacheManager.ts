@@ -24,35 +24,6 @@ export interface CachedAggregates {
     routeBuckets: Record<string, AggregateWithDelays>;
 }
 
-let cacheTableInitialized = false;
-
-// Create cache table if needed (runs once per process)
-export async function ensureCacheTableExists(): Promise<void> {
-    if (cacheTableInitialized) return;
-
-    try {
-        await sql`
-            CREATE TABLE IF NOT EXISTS cache_on_time_daily (
-                service_date DATE NOT NULL,
-                metric VARCHAR(20) NOT NULL,
-                threshold_minutes INT NOT NULL,
-                include_canceled BOOLEAN NOT NULL,
-                frequency_filter VARCHAR(20) NOT NULL,
-                route_id VARCHAR(20) NOT NULL,
-                data JSONB NOT NULL,
-                cached_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                PRIMARY KEY (service_date, metric, threshold_minutes, include_canceled, frequency_filter, route_id)
-            )
-        `;
-        await sql`CREATE INDEX IF NOT EXISTS idx_cache_on_time_daily_date ON cache_on_time_daily(service_date)`;
-
-        cacheTableInitialized = true;
-    } catch (error) {
-        console.error('Error ensuring cache tables exist:', error);
-        throw error;
-    }
-}
-
 // Check if date is today's service day (excludes current day from caching)
 export function isCurrentServiceDay(date: Date): boolean {
     const todayServiceDay = getDateFromTimestamp(new Date());
@@ -68,8 +39,6 @@ export async function getCachedDailyStats(
     frequencyFilter: string | null,
     routeId: string | null
 ): Promise<CachedAggregates | null> {
-    await ensureCacheTableExists();
-
     const dateStr = toDateString(serviceDate);
     const filterStr = frequencyFilter || '';
     const idStr = routeId || '';
@@ -104,7 +73,6 @@ export async function setCachedDailyStats(
     routeId: string | null,
     data: CachedAggregates
 ): Promise<void> {
-    await ensureCacheTableExists();
     const dateStr = toDateString(serviceDate);
     const filterStr = frequencyFilter || '';
     const idStr = routeId || '';
@@ -125,7 +93,6 @@ export async function setCachedDailyStats(
 
 // Clear cached data for a date range (useful after data corrections)
 export async function invalidateCacheForDateRange(startDate: Date, endDate: Date): Promise<void> {
-    await ensureCacheTableExists();
     const startDateStr = toDateString(startDate);
     const endDateStr = toDateString(endDate);
 
@@ -147,7 +114,6 @@ export async function getCacheStats(): Promise<{
     newestCachedDate: string | null;
     cacheSize: string;
 }> {
-    await ensureCacheTableExists();
     try {
         const stats = await sql<any[]>`
             SELECT 

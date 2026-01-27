@@ -14,7 +14,6 @@ import fs from 'fs';
 import { createListCanceledEndpoint } from "./endpoints/listCancelations.ts";
 import { createOnTimePerformanceEndpoint } from "./endpoints/onTimePerformance.ts";
 import { createBlockCancelCountEndpoint } from "./endpoints/blockCancelCount.ts";
-import { ensureCacheTableExists } from "./utils/cacheManager.ts";
 import { warmOnTimePerformanceCache } from "./utils/cachePrewarm.ts";
 
 const schedulePath = 'schedule/schedule.zip';
@@ -27,9 +26,6 @@ const server: FastifyInstance = Fastify({
         }
     }
 });
-
-// Initialize cache table
-await ensureCacheTableExists();
 
 // Schedule GTFS data fetch at 1 AM daily
 schedule.scheduleJob(
