@@ -9,8 +9,8 @@ function formatDate(date: Date): string {
     return `${year}-${month}-${day}`;
 }
 
+// Get all distinct dates from vehicle tracking data
 async function getAllServiceDays(): Promise<Date[]> {
-    // Get all unique dates where we have vehicle tracking data
     const result = await sql<{ date: string }[]>`
         SELECT DISTINCT DATE(time) as date
         FROM vehicles
@@ -24,8 +24,10 @@ async function getAllServiceDays(): Promise<Date[]> {
     return result.map(row => new Date(row.date));
 }
 
+// Pre-populate cache for all historical service days (skips current day)
 export async function warmOnTimePerformanceCache(server: FastifyInstance): Promise<void> {
     const days = await getAllServiceDays();
+    // Use default query parameters for base cache
     const metric = "avgObserved" as const;
     const threshold = 5;
     const includeCanceled = false;
@@ -39,6 +41,7 @@ export async function warmOnTimePerformanceCache(server: FastifyInstance): Promi
     let alreadyCached = 0;
     
     for (const day of days) {
+        // Skip today (data still changing)
         if (isCurrentServiceDay(day)) {
             skipped++;
             continue;
@@ -50,6 +53,7 @@ export async function warmOnTimePerformanceCache(server: FastifyInstance): Promi
             continue;
         }
 
+        // Trigger cache population via internal API call
         const qs = `date=${formatDate(day)}`;
         const res = await server.inject({ method: "GET", url: `/api/on-time-performance?${qs}` });
         if (res.statusCode >= 400) {

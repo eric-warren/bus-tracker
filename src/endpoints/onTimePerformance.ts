@@ -3,7 +3,7 @@ import { dateToTimeString, getDateFromTimestamp, getGtfsVersion, getServiceDayBo
 import sql from "../utils/database.ts";
 import { isCurrentServiceDay, getCachedDailyStats, setCachedDailyStats, type CachedAggregates, type AggregateWithDelays as CachedAggregateWithDelays } from "../utils/cacheManager.ts";
 
-// OC Transpo frequent transit network routes (15 min or better during peak)
+// Frequent transit network routes
 const frequentRouteIds = new Set([
     "5", "6", "7", "10", "11", "12", "14", "25", "40", "41", "44", "45",
     "57", "61", "62", "63", "68", "74", "75", "80", "85", "87", "88",
@@ -59,14 +59,16 @@ const opts: RouteShorthandOptions = {
     }
 };
 
+// Time-of-day buckets (in minutes from midnight)
 const timeBuckets = [
-    { label: "early", startMin: 0, endMin: 300 },
-    { label: "morning", startMin: 300, endMin: 540 },
-    { label: "midday", startMin: 540, endMin: 900 },
-    { label: "evening", startMin: 900, endMin: 1140 },
-    { label: "late", startMin: 1140, endMin: 1620 }
+    { label: "early", startMin: 0, endMin: 300 },      // 00:00-05:00
+    { label: "morning", startMin: 300, endMin: 540 },  // 05:00-09:00
+    { label: "midday", startMin: 540, endMin: 900 },   // 09:00-15:00
+    { label: "evening", startMin: 900, endMin: 1140 }, // 15:00-19:00
+    { label: "late", startMin: 1140, endMin: 1620 }    // 19:00-03:00 (next day)
 ];
 
+// Convert HH:MM:SS interval to decimal minutes
 function intervalToMinutes(interval: string | null): number | null {
     if (!interval) return null;
     const parts = interval.split(":").map(Number);
@@ -74,9 +76,11 @@ function intervalToMinutes(interval: string | null): number | null {
     return parts[0]! * 60 + parts[1]! + parts[2]! / 60;
 }
 
+// Calculate delay in minutes based on selected metric
 function computeMetric(trip: TripRow, metric: "avgObserved" | "start"): number | null {
     if (metric === "avgObserved") return trip.avg_delay_min;
 
+    // "start" metric: delay between scheduled and first observed departure
     if (!trip.start_time || !trip.first_seen) return null;
     const observedStart = dateToTimeString(trip.first_seen, true);
     return timeStringDiff(observedStart, trip.start_time) / 60;
@@ -136,6 +140,7 @@ function emptyAggregateBundle(): { overall: AggregateWithDelays; routes: Record<
     };
 }
 
+// Compute delay statistics (avg, median, p90, max) from aggregated delays
 function withStats(agg: AggregateWithDelays) {
     const base = withPercent(agg.counts);
     const delayValues = agg.delays.length ? [...agg.delays].sort((a, b) => a - b) : null;
@@ -195,6 +200,7 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
         return;
     }
 
+    // Build list of days to query
     const days: Date[] = [];
     const rangeEnd = endDate ?? startDate;
     for (let d = new Date(startDate); d <= rangeEnd; d.setDate(d.getDate() + 1)) {
@@ -206,8 +212,7 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
     const perDayAggregates: CachedAggregates[] = [];
 
     for (const dayOnlyDate of days) {
-        // Always try to load the unfiltered base cache (metric, threshold, includeCanceled only)
-        // Filters (frequency, route) are applied at merge time, not cached
+        // Try cache first (filters applied later during merge)
         const existing = await getCachedDailyStats(dayOnlyDate, metric, threshold, includeCanceled, null, null);
         if (existing) {
             perDayAggregates.push(existing);
@@ -226,6 +231,7 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
         
         const dateStr = `${dayOnlyDate.getFullYear()}-${String(dayOnlyDate.getMonth() + 1).padStart(2, '0')}-${String(dayOnlyDate.getDate()).padStart(2, '0')}`;
 
+        // Query all trips for this day with delays and cancellation status
         const trips = await sql<TripRow[]>`
             WITH service AS (
                 SELECT ${serviceDay.start}::timestamptz AS start_at, ${serviceDay.end}::timestamptz AS end_at
@@ -256,6 +262,7 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
 
         const dayAgg = emptyAggregateBundle();
 
+        // Aggregate each trip into overall, per-route, and time-of-day buckets
         for (const trip of trips) {
             const isCanceled = !!trip.schedule_relationship;
 
@@ -275,7 +282,7 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
             }
         }
 
-        // Cache the UNFILTERED base data (filters applied at merge time)
+        // Cache unfiltered base data for future queries
         const cachedPayload: CachedAggregates = dayAgg;
         await setCachedDailyStats(dayOnlyDate, metric, threshold, includeCanceled, null, null, cachedPayload);
         perDayAggregates.push(cachedPayload);
@@ -286,7 +293,7 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
         return;
     }
 
-    // Merge all days first
+    // Merge all daily aggregates
     const merged = emptyAggregateBundle();
     for (const agg of perDayAggregates) {
         mergeAggregate(merged.overall, agg.overall);
@@ -294,7 +301,7 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
         mergeAggregateMap(merged.buckets, agg.buckets);
     }
     
-    // Build routeOverall and routeBuckets based on filters
+    // Apply route and frequency filters to build routeOverall
     for (const [key, agg] of Object.entries(merged.routes)) {
         const routeId = key.split(':')[0];
         const isFrequent = frequentRouteIds.has(routeId);
@@ -309,17 +316,16 @@ async function endpoint(request: FastifyRequest<{ Querystring: OnTimeQuery }>, r
         }
     }
     
-    // For routeBuckets: we need to recompute from the trips if a route filter is specified
-    // Since the cached data has full routes aggregated per bucket, we can't easily extract per-route-per-bucket
-    // So we'll keep routeBuckets as the full bucket data (matching bucket filtering behavior)
+    // Route time buckets currently use full bucket data (not per-route filtered)
     merged.routeBuckets = { ...merged.buckets };
 
-
+    // Build per-route-direction list
     const routeList = Object.entries(merged.routes).map(([key, agg]) => {
         const [routeId, direction] = key.split(":");
         return { routeId, direction: Number(direction), ...withStats(agg) };
     }).sort((a, b) => parseInt(a.routeId) - parseInt(b.routeId));
 
+    // Combine both directions per route
     const routesCombined: Record<string, AggregateWithDelays> = {};
     for (const [key, agg] of Object.entries(merged.routes)) {
         const [routeId] = key.split(":");

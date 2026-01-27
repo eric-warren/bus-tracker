@@ -1,6 +1,7 @@
 import sql from './database.ts';
 import { getDateFromTimestamp, toDateString } from './schedule.ts';
 
+// Basic trip counts for on-time performance metrics
 export interface Counts {
     totalScheduled: number;
     evaluatedTrips: number;
@@ -8,11 +9,13 @@ export interface Counts {
     canceledTrips: number;
 }
 
+// Aggregated counts with raw delay values for statistical analysis
 export interface AggregateWithDelays {
     counts: Counts;
     delays: number[];
 }
 
+// Complete cached data structure for a service day
 export interface CachedAggregates {
     overall: AggregateWithDelays;
     routes: Record<string, AggregateWithDelays>;
@@ -23,10 +26,12 @@ export interface CachedAggregates {
 
 let cacheTableInitialized = false;
 
+// Create cache table if needed (runs once per process)
 export async function ensureCacheTableExists(): Promise<void> {
     if (cacheTableInitialized) return;
 
     try {
+        // Clean up legacy table name if it exists
         await sql`DROP TABLE IF EXISTS cache_on_time_performance CASCADE`;
 
         await sql`
@@ -51,11 +56,13 @@ export async function ensureCacheTableExists(): Promise<void> {
     }
 }
 
+// Check if date is today's service day (excludes current day from caching)
 export function isCurrentServiceDay(date: Date): boolean {
     const todayServiceDay = getDateFromTimestamp(new Date());
     return toDateString(date) === toDateString(todayServiceDay);
 }
 
+// Retrieve cached stats for a specific service day and configuration
 export async function getCachedDailyStats(
     serviceDate: Date,
     metric: string,
@@ -90,6 +97,7 @@ export async function getCachedDailyStats(
     }
 }
 
+// Store or update cached stats for a service day (upsert)
 export async function setCachedDailyStats(
     serviceDate: Date,
     metric: string,
@@ -118,9 +126,7 @@ export async function setCachedDailyStats(
     }
 }
 
-/**
- * Clear cache for a specific date range
- */
+// Clear cached data for a date range (useful after data corrections)
 export async function invalidateCacheForDateRange(startDate: Date, endDate: Date): Promise<void> {
     await ensureCacheTableExists();
     const startDateStr = toDateString(startDate);
@@ -137,9 +143,6 @@ export async function invalidateCacheForDateRange(startDate: Date, endDate: Date
     }
 }
 
-/**
- * Get cache statistics
- */
 export async function getCacheStats(): Promise<{
     totalEntries: number;
     datesWithCache: number;
