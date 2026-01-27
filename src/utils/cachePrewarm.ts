@@ -55,7 +55,7 @@ export async function warmOnTimePerformanceCache(server: FastifyInstance): Promi
 
         // Trigger cache population via internal API call
         const qs = `date=${formatDate(day)}`;
-        const res = await server.inject({ method: "GET", url: `/api/on-time-performance?${qs}` });
+        const res = await server.inject({ method: "GET", url: `/api/onTimePerformance?${qs}` });
         if (res.statusCode >= 400) {
             console.warn(`Cache pre-warm failed for ${formatDate(day)}: status ${res.statusCode}`);
         } else {
