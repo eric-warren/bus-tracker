@@ -73,5 +73,5 @@ async function endpoint(request: FastifyRequest<{Querystring: BusCountQuery}>, r
 
 export function createBusCountEndpoint(server: FastifyInstance) {
     // todo: finish optimizing
-    // server.get<{Querystring: BusCountQuery}>('/api/activeBuses', opts, endpoint);
+    server.get<{Querystring: BusCountQuery}>('/api/activeBuses', opts, endpoint);
 }
