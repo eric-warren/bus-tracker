@@ -31,9 +31,6 @@ export async function ensureCacheTableExists(): Promise<void> {
     if (cacheTableInitialized) return;
 
     try {
-        // Clean up legacy table name if it exists
-        await sql`DROP TABLE IF EXISTS cache_on_time_performance CASCADE`;
-
         await sql`
             CREATE TABLE IF NOT EXISTS cache_on_time_daily (
                 service_date DATE NOT NULL,
