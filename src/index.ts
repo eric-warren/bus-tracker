@@ -14,7 +14,6 @@ import fs from 'fs';
 import { createListCanceledEndpoint } from "./endpoints/listCancelations.ts";
 import { createOnTimePerformanceEndpoint } from "./endpoints/onTimePerformance.ts";
 import { createBlockCancelCountEndpoint } from "./endpoints/blockCancelCount.ts";
-import { createCacheEndpoints } from "./endpoints/cache.ts";
 import { ensureCacheTableExists } from "./utils/cacheManager.ts";
 import { warmOnTimePerformanceCache } from "./utils/cachePrewarm.ts";
 
@@ -61,7 +60,6 @@ createListRoutesEndpoint(server);
 createListCanceledEndpoint(server);
 createOnTimePerformanceEndpoint(server);
 createBlockCancelCountEndpoint(server);
-createCacheEndpoints(server);
 
 await server.register(cors, { origin: "*" });
 
