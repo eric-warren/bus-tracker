@@ -207,15 +207,16 @@ export async function importGtfs(filePath: string, date: Date): Promise<void> {
             const stopId = columns[0]!;
             const stopCode = columns[1] || null;
             const stopName = columns[2]!;
-            const stopDesc = columns[3] || null;
-            const stopLat = columns[4] ? parseFloat(columns[4]!) : null;
-            const stopLon = columns[5] ? parseFloat(columns[5]!) : null;
-            const zoneId = columns[6] || null;
-            const stopUrl = columns[7] || null;
-            const locationType = columns[8] ? parseInt(columns[8]!) : null;
-            const parentStation = columns[9] || null;
-            const stopTimezone = columns[10] || null;
-            const wheelchairBoarding = columns[11] ? parseInt(columns[11]!) : null;
+            // columns[3] is tts_stop_name (skipped always empty)
+            const stopDesc = columns[4] || null;
+            const stopLat = columns[5] ? parseFloat(columns[5]!) : null;
+            const stopLon = columns[6] ? parseFloat(columns[6]!) : null;
+            const zoneId = columns[7] || null;
+            const stopUrl = columns[8] || null;
+            const locationType = columns[9] ? parseInt(columns[9]!) : null;
+            const parentStation = columns[10] || null;
+            const stopTimezone = columns[11] || null;
+            const wheelchairBoarding = columns[12] ? parseInt(columns[12]!) : null;
 
             // Don't run out of memory
             if (promises.length >= 100000) {
